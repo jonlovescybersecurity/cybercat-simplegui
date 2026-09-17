@@ -1,0 +1,38 @@
+name: Windows build
+
+on:
+  push:
+    branches:
+      - develop/current-cp2077
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Build solution
+        run: dotnet build CP2077SaveEditor.sln -c Release -p:Platform=x64
+      - name: Build save probes
+        run: |
+          dotnet build tools/SaveLoadProbe/SaveLoadProbe.csproj -c Release -p:Platform=x64
+          dotnet build tools/SaveRoundTripProbe/SaveRoundTripProbe.csproj -c Release -p:Platform=x64
+          dotnet build tools/SaveEditProbe/SaveEditProbe.csproj -c Release -p:Platform=x64
+      - name: Upload editor build
+        uses: actions/upload-artifact@v4
+        with:
+          name: cybercat-simplegui-windows-alpha
+          path: |
+            CP2077SaveEditor/bin/x64/Release/net8.0-windows7.0/
+            previews/
+            config.json
+            items.bin
+            tools/SaveLoadProbe/bin/x64/Release/net8.0-windows7.0/
+            tools/SaveRoundTripProbe/bin/x64/Release/net8.0/
+            tools/SaveEditProbe/bin/x64/Release/net8.0-windows7.0/
