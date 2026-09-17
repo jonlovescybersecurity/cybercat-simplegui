@@ -150,62 +150,66 @@ namespace CP2077SaveEditor.Views
         private async void LoadSave(string savePath)
         {
             IsLoaded = false;
+            ActiveSaveFile = null;
             pnl_Content.Enabled = false;
             openSaveButton.Enabled = false;
             saveChangesButton.Enabled = false;
 
             SetStatus("Loading save...");
 
-            var status = EFileReadErrorCodes.NoCSav;
-
             try
             {
-                await Task.Run(() =>
+                var result = await Task.Run(() =>
                 {
-                    using var fs = File.Open(savePath, FileMode.Open);
+                    using var fs = new FileStream(savePath, FileMode.Open, FileAccess.Read, FileShare.Read);
                     using var reader = new CyberpunkSaveReader(fs);
 
-                    status = reader.ReadFile(out var save);
+                    var status = reader.ReadFile(out var save);
                     switch (status)
                     {
                         case EFileReadErrorCodes.NoError:
-                            ActiveSaveFile = new SaveFileHelper { SaveFile = save };
+                            var loadedSave = new SaveFileHelper { SaveFile = save };
 
                             var metadataPath = Path.Combine(Path.GetDirectoryName(savePath), "metadata.9.json");
                             if (File.Exists(metadataPath))
                             {
-                                ActiveSaveFile.Metadata = File.ReadAllBytes(metadataPath);
+                                loadedSave.Metadata = File.ReadAllBytes(metadataPath);
                             }
 
                             var screenshotPath = Path.Combine(Path.GetDirectoryName(savePath), "screenshot.png");
                             if (File.Exists(screenshotPath))
                             {
-                                ActiveSaveFile.ImageData = File.ReadAllBytes(screenshotPath);
+                                loadedSave.ImageData = File.ReadAllBytes(screenshotPath);
                             }
 
-                            this.InvokeIfRequired(() => { saveChangesButton.Enabled = true; });
-                            break;
-                        case EFileReadErrorCodes.NoCSav:
-                            MessageBox.Show("Failed to parse save file: File contains invalid data");
-                            return;
+                            return (Status: status, Save: loadedSave, Version: (uint?)null);
                         case EFileReadErrorCodes.UnsupportedVersion:
                             fs.Position = 0;
                             reader.ReadFileInfo(out var info);
-
-                            MessageBox.Show(
-                                $"Failed to parse save file: Game version {info.Value.GameVersion} is not supported!");
-                            return;
+                            return (Status: status, Save: (SaveFileHelper)null, Version: (uint?)info?.GameVersion);
                         default:
-                            throw new ArgumentOutOfRangeException();
+                            return (Status: status, Save: (SaveFileHelper)null, Version: (uint?)null);
                     }
                 });
 
-                filePathLabel.Text = Path.GetFileName(Path.GetDirectoryName(savePath));
-
-                GC.Collect();
+                switch (result.Status)
+                {
+                    case EFileReadErrorCodes.NoError:
+                        ActiveSaveFile = result.Save;
+                        filePathLabel.Text = Path.GetFileName(Path.GetDirectoryName(savePath));
+                        IsLoaded = true;
+                        break;
+                    case EFileReadErrorCodes.UnsupportedVersion:
+                        MessageBox.Show($"Failed to parse save file: Game version {result.Version} is not supported!");
+                        break;
+                    default:
+                        MessageBox.Show("Failed to parse save file: File contains invalid data");
+                        break;
+                }
             }
             catch (Exception e)
             {
+                ActiveSaveFile = null;
                 try
                 {
                     var message = e.Message;
@@ -227,15 +231,13 @@ namespace CP2077SaveEditor.Views
                                     e.StackTrace);
                 }
             }
-
-            SetStatus("Idle");
-
-            openSaveButton.Enabled = true;
-
-            if (status == EFileReadErrorCodes.NoError)
+            finally
             {
-                pnl_Content.Enabled = true;
-                IsLoaded = true;
+                pnl_Content.Enabled = IsLoaded;
+                saveChangesButton.Enabled = IsLoaded;
+                openSaveButton.Enabled = true;
+                SetStatus("Idle");
+                GC.Collect();
             }
         }
 
@@ -284,13 +286,9 @@ namespace CP2077SaveEditor.Views
 
             var fileName = Path.Combine(fileDirectory, "sav.dat");
 
-            if (File.Exists(fileName) && !File.Exists(Path.Combine(fileDirectory, "sav.old")))
-            {
-                File.Copy(fileName, Path.Combine(fileDirectory, "sav.old"));
-            }
-
             SetStatus("Saving...");
             _isSaving = true;
+            var saved = false;
 
             try
             {
@@ -302,11 +300,7 @@ namespace CP2077SaveEditor.Views
                     writer.WriteFile(ActiveSaveFile.SaveFile, true);
                 });
 
-                await using (var fs = File.Open(fileName, FileMode.Create))
-                {
-                    ms.Position = 0;
-                    await ms.CopyToAsync(fs);
-                }
+                var backupPath = await SaveFileWriteHelper.WriteAsync(fileName, ms);
 
                 var metadataPath = Path.Combine(fileDirectory, "metadata.9.json");
                 if (!File.Exists(metadataPath))
@@ -333,6 +327,9 @@ namespace CP2077SaveEditor.Views
                         MessageBox.Show("Error while saving file: screenshot.png could not be found.");
                     }
                 }
+
+                saved = true;
+                SetStatus(backupPath == null ? "File saved." : $"File saved. Backup: {Path.GetFileName(backupPath)}");
             }
             catch (Exception err)
             {
@@ -352,7 +349,10 @@ namespace CP2077SaveEditor.Views
             saveChangesButton.Enabled = true;
 
             _isSaving = false;
-            SetStatus("File saved.");
+            if (!saved)
+            {
+                SetStatus("Save failed.");
+            }
 
             GC.Collect();
         }
