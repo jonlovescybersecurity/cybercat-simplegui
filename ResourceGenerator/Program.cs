@@ -21,9 +21,7 @@ namespace ResourceGenerator
 
         private static void GenerateTweakFiles(string tweakPath)
         {
-            var stringHelper = new TweakDBStringHelper();
-            stringHelper.LoadFromStream(typeof(TweakDBService).Assembly.GetManifestResourceStream("WolvenKit.Common.Resources.tweakdbstr.kark"));
-            TweakDBIDPool.ResolveHashHandler += stringHelper.GetString;
+            _ = new HashService();
 
             using var fh = File.OpenRead(tweakPath);
             using var reader = new TweakDBReader(fh);
